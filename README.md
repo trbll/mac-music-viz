@@ -83,9 +83,18 @@ for the current preset from the bottom button.
 - **ParamStore** persists per-preset values to UserDefaults and packs them
   into the GPU-ready `PresetParams` struct each frame.
 
-## Adding a preset
+## Extending
 
-See [CLAUDE.md](CLAUDE.md#adding-a-preset).
+See [CLAUDE.md](CLAUDE.md) for:
+
+- [Shader inputs reference](CLAUDE.md#shader-inputs-reference) — what's bound
+  in every fragment shader (audio uniforms, textures, helpers)
+- [ParamSpec kinds](CLAUDE.md#paramspec-kinds--ui--shader-mapping) — the
+  UI-to-shader mapping for each control type
+- [Adding a preset — worked example](CLAUDE.md#adding-a-preset--worked-example)
+  — end-to-end: fragment function, registration, running it
+- [Adding a new `ParamSpec.Kind`](CLAUDE.md#adding-a-new-paramspeckind) — when
+  the built-in control types aren't enough
 
 ## Project layout
 

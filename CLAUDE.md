@@ -62,25 +62,184 @@ offset 112  float4 c3           // color slot 3
 `p(i/4).(x|y|z|w)` by `ParamStore.packed`) or `.color(i)` where `i ∈ 0..<4`
 (mapped to `c0..c3`). Bools pack as `0.0`/`1.0` floats; ints cast to float.
 
-## Adding a preset
+## Shader inputs reference
 
-1. Add a fragment function in `Shaders.metal`:
-   ```metal
-   fragment float4 fragment_new(VOut in [[stage_in]],
-                                constant AudioUniforms& u [[buffer(0)]],
-                                constant PresetParams& p [[buffer(1)]]) {
-       // read params: float x = p.p0.x; float3 tint = p.c0.rgb;
-       return float4(...);
-   }
-   ```
-2. Add a `Preset` entry in `PresetManager.all` with:
-   - unique `id` (used as the UserDefaults key prefix)
-   - `fragmentFunction` matching the MSL function name
-   - a `[ParamSpec]` list declaring which slots it reads and the control type
-3. Build. The renderer compiles and caches the pipeline on first use.
+Every fragment shader gets the same plumbing. Knowing what's available keeps
+you from reinventing it.
 
-Do **not** reuse the same `id` across presets — it will collide in
-`ParamStore`'s persistence dictionary.
+### `AudioUniforms` at `[[buffer(0)]]`
+```metal
+struct AudioUniforms {
+    float  time;         // seconds since app start, monotonic, unbounded
+    float  beat;         // 0..1, spikes on bass onset, decays ~0.88/frame
+    float2 resolution;   // drawable pixel size
+    float  bass;         // 0..1, smoothed (<200 Hz)
+    float  mid;          // 0..1, smoothed (200 Hz..2 kHz)
+    float  treble;       // 0..1, smoothed (>2 kHz)
+    float  loudness;     // 0..1, smoothed RMS
+};
+```
+All scalars are already smoothed and clamped. Don't re-smooth or re-clamp.
+
+### `PresetParams` at `[[buffer(1)]]`
+```metal
+struct PresetParams {
+    float4 p0, p1, p2, p3;   // your scalar slots (see packing below)
+    float4 c0, c1, c2, c3;   // your color slots
+};
+```
+
+### Textures
+```metal
+texture2d<float> spectrum [[texture(0)]];   // 128 × 1, R32Float, log-spaced bins
+texture2d<float> waveform [[texture(1)]];   // 256 × 1, R32Float, time-domain samples
+```
+Sample with:
+```metal
+constexpr sampler s(address::clamp_to_edge, filter::linear);
+float mag = spectrum.sample(s, float2(uv.x, 0.5)).r;   // 0..~1 after window+norm
+float wav = waveform.sample(s, float2(uv.x, 0.5)).r;   // -1..1-ish
+```
+Bind whichever textures you use — omit them from the signature if you don't.
+
+### Shared helpers in `Shaders.metal`
+- `palette(float t)` — IQ-style cyclic 3-channel palette, `t ∈ [0, 1]`.
+  Add more if needed (keep them `static inline`).
+
+### Vertex shader
+Don't write one. Use `vertex_fullscreen` — a big-triangle pass that hands the
+fragment shader a `VOut` with `uv ∈ [0, 1]`, y-flipped so `uv.y = 0` is the
+top of the screen (matches image-space intuition).
+
+### UV conventions
+- `in.uv` is `[0, 1]` screen-space, top-left origin.
+- Centered coords: `float2 p = in.uv * 2.0 - 1.0;`
+- Aspect-correct: `p.x *= u.resolution.x / u.resolution.y;`
+
+## ParamSpec kinds — UI ↔ shader mapping
+
+| `Kind`                     | SwiftUI control | Persisted `ParamValue`  | Shader reads               |
+|----------------------------|-----------------|-------------------------|----------------------------|
+| `.slider(min, max)`        | `Slider`        | `.float(Float)`         | `p.p(k/4)[k%4]` (a float)  |
+| `.stepper(min, max)`       | `Stepper`       | `.int(Int)`             | `p.p(k/4)[k%4]` (as float) |
+| `.toggle`                  | `Toggle`        | `.bool(Bool)`           | `step(0.5, p.p…)` → 0 or 1 |
+| `.color`                   | `ColorPicker`   | `.color(SIMD4<Float>)`  | `p.c0/c1/c2/c3` (rgba)     |
+| `.picker(options: […])`    | `Picker`        | `.int(Int)` (option idx)| `p.p(k/4)[k%4]` (as float) |
+
+`k` is the `slot: .float(k)` index, `0..<16`. Color slots are `0..<4`.
+
+## Adding a preset — worked example
+
+Goal: a preset called "Rings" that draws concentric circles pulsing outward,
+with configurable ring count, pulse speed, beat flash, and ring color.
+
+### 1. Write the fragment shader
+
+Append to `Shaders.metal`:
+
+```metal
+// ---------- 6. Rings ----------
+// params: p0.x=ringCount, p0.y=pulseSpeed, p0.z=beatFlash, p0.w=thickness
+// colors: c0 = ringColor
+fragment float4 fragment_rings(VOut in [[stage_in]],
+                               constant AudioUniforms& u [[buffer(0)]],
+                               constant PresetParams& p [[buffer(1)]]) {
+    float ringCount  = max(1.0, p.p0.x);
+    float pulseSpeed = p.p0.y;
+    float beatFlash  = p.p0.z;
+    float thickness  = max(0.01, p.p0.w);
+    float3 color     = p.c0.rgb;
+
+    float aspect = u.resolution.x / max(u.resolution.y, 1.0);
+    float2 uv = in.uv * 2.0 - 1.0;
+    uv.x *= aspect;
+
+    float r = length(uv);
+    float phase = u.time * pulseSpeed + u.bass * 2.0;
+
+    // distance to nearest ring edge
+    float rings = fract(r * ringCount - phase);
+    float edge  = smoothstep(thickness, 0.0, abs(rings - 0.5));
+
+    float3 col = color * edge;
+    col *= 0.5 + 0.5 * palette(r * 0.2 + u.time * 0.05);
+    col *= 1.0 + u.beat * beatFlash;
+    col *= smoothstep(1.6, 0.2, r);   // radial falloff
+    return float4(col, 1.0);
+}
+```
+
+### 2. Register the preset
+
+Edit `PresetManager.swift`. Add a new file-scope constant below the others:
+
+```swift
+private let rings = Preset(
+    id: "rings", name: "Rings", fragmentFunction: "fragment_rings",
+    params: [
+        .init(id: "ringCount",  label: "Ring count",  kind: .stepper(min: 2, max: 40),
+              defaultValue: .int(12),   slot: .float(0)),
+        .init(id: "pulseSpeed", label: "Pulse speed", kind: .slider(min: 0, max: 4),
+              defaultValue: .float(1.0), slot: .float(1)),
+        .init(id: "beatFlash",  label: "Beat flash",  kind: .slider(min: 0, max: 3),
+              defaultValue: .float(1.2), slot: .float(2)),
+        .init(id: "thickness",  label: "Thickness",   kind: .slider(min: 0.05, max: 0.8),
+              defaultValue: .float(0.25), slot: .float(3)),
+        .init(id: "color",      label: "Ring color",  kind: .color,
+              defaultValue: .color(.init(0.9, 0.6, 1.0, 1.0)), slot: .color(0)),
+    ]
+)
+```
+
+Then add it to `all`:
+```swift
+static let all: [Preset] = [plasma, tunnel, bars, oscilloscope, bloom, rings]
+```
+
+### 3. Build and run
+
+```bash
+cd MusicViz && xcodebuild -project MusicViz.xcodeproj -scheme MusicViz \
+    -configuration Debug build | grep -E "(error:|BUILD (SUCCEEDED|FAILED))"
+```
+
+If it builds, ⌘R in Xcode, press `→` until you cycle to Rings, ⌘, to tweak.
+
+### Rules and gotchas
+
+- **`id` is a stable key.** Once shipped, don't rename — user's saved
+  settings are keyed on it. Same for each `ParamSpec.id` within the preset.
+- **Slot collisions within a preset silently overwrite.** If two `ParamSpec`s
+  in the same preset declare `slot: .float(0)`, whichever is packed last
+  wins. `ParamStore.packed` iterates in order.
+- **Slot collisions across presets are fine** — each preset has its own
+  `PresetParams` packed fresh every frame.
+- **Don't reuse a `ParamSpec.id` across presets unless intentional** — the
+  store is scoped per-preset (`values[presetId][key]`), so it's safe, but it
+  can confuse readers. Prefer distinct names.
+- **Bools and ints land in float slots.** In shader, bool → use
+  `step(0.5, p.p0.z)`; int → just use it as a float and round if needed.
+- **Missing `fragmentFunction` → renderer logs and draws nothing.** Check
+  the function name matches the MSL exactly (case-sensitive).
+- **Shader compile errors fail the pipeline build.** Look for
+  `MusicViz: pipeline build failed for <id>: …` in the Xcode console.
+  Metal reports line numbers relative to `Shaders.metal`.
+- **Every preset auto-gets spectrum + waveform textures bound.** They're
+  only used if your fragment function takes them as `[[texture(0/1)]]`
+  params; otherwise the binding is a no-op.
+
+## Adding a new `ParamSpec.Kind`
+
+Rare, but if you need (say) a two-float vector picker or a file path:
+
+1. Extend `ParamSpec.Kind` with the new case.
+2. Extend `ParamValue` with a new case + Codable encode/decode branches.
+3. Extend `ParamValue.asFloat` / `asColor` (or add a new accessor) so
+   `ParamStore.packed` can read it.
+4. Add a branch in `ConfigPanel.ParamRow.control` rendering the new SwiftUI
+   control bound to a `ParamValue`-round-tripping `Binding`.
+5. Document the shader side here (which slot type it lands in, how the
+   shader should read it).
 
 ## ScreenCaptureKit gotchas
 
