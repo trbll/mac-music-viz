@@ -152,12 +152,12 @@ private struct ParamRow: View {
             }
             .pickerStyle(.segmented)
         case .palette(let count):
-            HStack(spacing: 6) {
+            HStack(spacing: 10) {
                 ForEach(0..<count, id: \.self) { i in
                     ColorPicker("", selection: paletteBinding(at: i, count: count),
                                 supportsOpacity: false)
                         .labelsHidden()
-                        .frame(width: 28, height: 22)
+                        .fixedSize()
                 }
                 Spacer(minLength: 0)
             }
