@@ -9,7 +9,19 @@ struct Preset: Identifiable, Sendable {
 }
 
 final class PresetManager: ObservableObject {
-    static let all: [Preset] = [plasma, tunnel, bars, oscilloscope, bloom]
+    static let all: [Preset] = [
+        plasma,
+        tunnel,
+        bars,
+        oscilloscope,
+        bloom,
+        chladni,
+        aurora,
+        kaleidoscope,
+        topographic,
+        constellation,
+        vinyl
+    ]
 
     @Published private(set) var index: Int = 0
     var current: Preset { Self.all[index] }
@@ -126,5 +138,148 @@ private let bloom = Preset(
                   .init(0.90, 0.90, 0.60, 1.0),
               ]),
               slot: .palette([0, 1, 2, 3])),
+    ]
+)
+
+private let chladni = Preset(
+    id: "chladni", name: "Chladni Plate", fragmentFunction: "fragment_chladni",
+    params: [
+        .init(id: "modeX", label: "Mode X", kind: .stepper(min: 2, max: 18),
+              defaultValue: .int(5), slot: .float(0)),
+        .init(id: "modeY", label: "Mode Y", kind: .stepper(min: 2, max: 18),
+              defaultValue: .int(7), slot: .float(1)),
+        .init(id: "lineSharpness", label: "Line sharpness", kind: .slider(min: 8, max: 70),
+              defaultValue: .float(34.0), slot: .float(2)),
+        .init(id: "beatFlash", label: "Beat flash", kind: .slider(min: 0, max: 3),
+              defaultValue: .float(1.15), slot: .float(3)),
+        .init(id: "drift", label: "Drift", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.35), slot: .float(4)),
+        .init(id: "scale", label: "Scale", kind: .slider(min: 0.5, max: 4),
+              defaultValue: .float(1.18), slot: .float(5)),
+        .init(id: "palette", label: "Palette", kind: .palette(count: 3),
+              defaultValue: .palette([
+                  .init(0.04, 0.02, 0.08, 1.0),
+                  .init(0.12, 0.85, 1.00, 1.0),
+                  .init(1.00, 0.82, 0.28, 1.0),
+              ]),
+              slot: .palette([0, 1, 2])),
+    ]
+)
+
+private let aurora = Preset(
+    id: "aurora", name: "Aurora Ribbon", fragmentFunction: "fragment_aurora",
+    params: [
+        .init(id: "layers", label: "Layers", kind: .stepper(min: 2, max: 9),
+              defaultValue: .int(5), slot: .float(0)),
+        .init(id: "flowSpeed", label: "Flow speed", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.28), slot: .float(1)),
+        .init(id: "gain", label: "Gain", kind: .slider(min: 0.5, max: 5),
+              defaultValue: .float(2.4), slot: .float(2)),
+        .init(id: "shimmer", label: "Shimmer", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.75), slot: .float(3)),
+        .init(id: "haze", label: "Haze", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.55), slot: .float(4)),
+        .init(id: "palette", label: "Palette", kind: .palette(count: 4),
+              defaultValue: .palette([
+                  .init(0.04, 0.12, 0.18, 1.0),
+                  .init(0.12, 0.92, 0.64, 1.0),
+                  .init(0.38, 0.40, 1.00, 1.0),
+                  .init(1.00, 0.36, 0.70, 1.0),
+              ]),
+              slot: .palette([0, 1, 2, 3])),
+    ]
+)
+
+private let kaleidoscope = Preset(
+    id: "kaleidoscope", name: "Kaleidoscope Prism", fragmentFunction: "fragment_kaleidoscope",
+    params: [
+        .init(id: "segments", label: "Segments", kind: .stepper(min: 3, max: 18),
+              defaultValue: .int(8), slot: .float(0)),
+        .init(id: "rotation", label: "Rotation", kind: .slider(min: 0, max: 3),
+              defaultValue: .float(0.35), slot: .float(1)),
+        .init(id: "warp", label: "Warp", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.75), slot: .float(2)),
+        .init(id: "beatPunch", label: "Beat punch", kind: .slider(min: 0, max: 3),
+              defaultValue: .float(1.2), slot: .float(3)),
+        .init(id: "prism", label: "Prism", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.8), slot: .float(4)),
+        .init(id: "palette", label: "Palette", kind: .palette(count: 4),
+              defaultValue: .palette([
+                  .init(1.00, 0.18, 0.42, 1.0),
+                  .init(1.00, 0.82, 0.20, 1.0),
+                  .init(0.15, 0.90, 1.00, 1.0),
+                  .init(0.55, 0.25, 1.00, 1.0),
+              ]),
+              slot: .palette([0, 1, 2, 3])),
+    ]
+)
+
+private let topographic = Preset(
+    id: "topographic", name: "Topographic Pulse", fragmentFunction: "fragment_topographic",
+    params: [
+        .init(id: "contours", label: "Contours", kind: .stepper(min: 6, max: 36),
+              defaultValue: .int(18), slot: .float(0)),
+        .init(id: "terrainScale", label: "Terrain scale", kind: .slider(min: 1, max: 8),
+              defaultValue: .float(3.4), slot: .float(1)),
+        .init(id: "drift", label: "Drift", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.22), slot: .float(2)),
+        .init(id: "shockwave", label: "Shockwave", kind: .slider(min: 0, max: 3),
+              defaultValue: .float(1.2), slot: .float(3)),
+        .init(id: "lineWidth", label: "Line width", kind: .slider(min: 0.1, max: 2),
+              defaultValue: .float(0.75), slot: .float(4)),
+        .init(id: "palette", label: "Palette", kind: .palette(count: 4),
+              defaultValue: .palette([
+                  .init(0.03, 0.05, 0.06, 1.0),
+                  .init(0.10, 0.48, 0.72, 1.0),
+                  .init(0.42, 0.76, 0.36, 1.0),
+                  .init(1.00, 0.92, 0.65, 1.0),
+              ]),
+              slot: .palette([0, 1, 2, 3])),
+    ]
+)
+
+private let constellation = Preset(
+    id: "constellation", name: "Spectral Constellation", fragmentFunction: "fragment_constellation",
+    params: [
+        .init(id: "density", label: "Density", kind: .stepper(min: 16, max: 96),
+              defaultValue: .int(56), slot: .float(0)),
+        .init(id: "spiral", label: "Spiral", kind: .slider(min: 0, max: 4),
+              defaultValue: .float(1.25), slot: .float(1)),
+        .init(id: "connectionGlow", label: "Connection glow", kind: .slider(min: 0, max: 3),
+              defaultValue: .float(1.0), slot: .float(2)),
+        .init(id: "speed", label: "Speed", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.22), slot: .float(3)),
+        .init(id: "sparkle", label: "Sparkle", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.9), slot: .float(4)),
+        .init(id: "palette", label: "Palette", kind: .palette(count: 3),
+              defaultValue: .palette([
+                  .init(1.00, 0.76, 0.28, 1.0),
+                  .init(0.28, 0.86, 1.00, 1.0),
+                  .init(1.00, 0.38, 0.78, 1.0),
+              ]),
+              slot: .palette([0, 1, 2])),
+    ]
+)
+
+private let vinyl = Preset(
+    id: "vinyl", name: "Vinyl Scanner", fragmentFunction: "fragment_vinyl",
+    params: [
+        .init(id: "grooves", label: "Grooves", kind: .stepper(min: 24, max: 120),
+              defaultValue: .int(72), slot: .float(0)),
+        .init(id: "scanSpeed", label: "Scan speed", kind: .slider(min: 0, max: 3),
+              defaultValue: .float(0.45), slot: .float(1)),
+        .init(id: "wobble", label: "Wobble", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.85), slot: .float(2)),
+        .init(id: "notchGain", label: "Notch gain", kind: .slider(min: 0.5, max: 5),
+              defaultValue: .float(2.5), slot: .float(3)),
+        .init(id: "labelGlow", label: "Label glow", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.45), slot: .float(4)),
+        .init(id: "palette", label: "Palette", kind: .palette(count: 3),
+              defaultValue: .palette([
+                  .init(0.015, 0.015, 0.018, 1.0),
+                  .init(0.86, 0.82, 0.70, 1.0),
+                  .init(1.00, 0.24, 0.16, 1.0),
+              ]),
+              slot: .palette([0, 1, 2])),
     ]
 )

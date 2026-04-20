@@ -4,7 +4,7 @@ A system-level music visualizer for macOS. Captures whatever audio your Mac is
 playing — Apple Music, Spotify, YouTube, anything — and renders it through a
 set of Metal shader presets.
 
-![plasma, tunnel, spectrum bars, oscilloscope, bloom — five built-in presets](docs/preview.png)
+![plasma, tunnel, spectrum bars, oscilloscope, bloom — built-in preset preview](docs/preview.png)
 
 ## Requirements
 
@@ -47,6 +47,12 @@ for the current preset from the bottom button.
 | Spectrum Bars  | `fragment_bars`         | Classic log-spaced spectrum bars       |
 | Oscilloscope   | `fragment_oscilloscope` | CRT-style waveform trace with scanlines|
 | Apple Bloom    | `fragment_bloom`        | Soft drifting blobs, Apple-Music-ish   |
+| Chladni Plate  | `fragment_chladni`      | Cymatic nodal patterns with beat flash |
+| Aurora Ribbon  | `fragment_aurora`       | Layered spectral curtains and shimmer  |
+| Kaleidoscope Prism | `fragment_kaleidoscope` | Mirrored prism wedges and audio warp |
+| Topographic Pulse | `fragment_topographic` | Contour-map terrain with pulse rings |
+| Spectral Constellation | `fragment_constellation` | Spectrum-driven stars and links |
+| Vinyl Scanner  | `fragment_vinyl`        | Record grooves, waveform wobble, scan beam |
 
 ## Architecture
 
@@ -123,6 +129,8 @@ music-viz/
 
 - [ ] Upgrade `GlassEffects.swift` to real Liquid Glass (`.glassEffect(...)`)
       once on Xcode 26 / macOS 26
+- [ ] v2: mouse interaction uniforms + multipass post-processing
+      (bloom, trails, ripples, lens effects)
 - [ ] More presets (particles, fluid sim, CRT raymarch)
 - [ ] Fullscreen on dedicated display from menu
 - [ ] Preset export / import as JSON

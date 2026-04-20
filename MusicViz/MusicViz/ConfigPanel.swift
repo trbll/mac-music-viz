@@ -103,21 +103,18 @@ private struct ParamRow: View {
                 in: lo...hi
             )
         case .stepper(let lo, let hi):
-            Stepper(
-                value: Binding<Int>(
-                    get: {
-                        if case .int(let v) = params.value(presetId: presetId, spec: spec) {
-                            return v
-                        }
-                        return Int(params.value(presetId: presetId, spec: spec).asFloat)
-                    },
-                    set: { params.set(.int($0), presetId: presetId, key: spec.id) }
+            Slider(
+                value: Binding<Float>(
+                    get: { Float(intValue()) },
+                    set: { newValue in
+                        let rounded = Int(newValue.rounded())
+                        let clamped = min(max(rounded, lo), hi)
+                        params.set(.int(clamped), presetId: presetId, key: spec.id)
+                    }
                 ),
-                in: lo...hi
-            ) {
-                EmptyView()
-            }
-            .labelsHidden()
+                in: Float(lo)...Float(hi),
+                step: 1
+            )
         case .toggle:
             Toggle(isOn: Binding(
                 get: {
@@ -178,6 +175,13 @@ private struct ParamRow: View {
                 params.set(.palette(stops), presetId: presetId, key: spec.id)
             }
         )
+    }
+
+    private func intValue() -> Int {
+        if case .int(let v) = params.value(presetId: presetId, spec: spec) {
+            return v
+        }
+        return Int(params.value(presetId: presetId, spec: spec).asFloat.rounded())
     }
 
     @ViewBuilder
