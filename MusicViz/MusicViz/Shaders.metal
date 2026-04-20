@@ -40,9 +40,11 @@ vertex VOut vertex_fullscreen(uint vid [[vertex_id]]) {
     return o;
 }
 
-// ---------- helpers ----------
+// ---------- palette helpers ----------
 
-static inline float3 palette(float t) {
+// Procedural IQ-style palette. Kept for shaders that want a default cyclic
+// color without asking the user. Presets normally use palette2/3/4Cyc below.
+[[maybe_unused]] static inline float3 palette(float t) {
     const float3 a = float3(0.5, 0.5, 0.5);
     const float3 b = float3(0.5, 0.5, 0.5);
     const float3 c = float3(1.0, 1.0, 1.0);
@@ -50,9 +52,42 @@ static inline float3 palette(float t) {
     return a + b * cos(6.2831853 * (c * t + d));
 }
 
+// 2-stop linear gradient. t is clamped to [0, 1].
+[[maybe_unused]] static inline float3 palette2(float t, float3 c0, float3 c1) {
+    return mix(c0, c1, clamp(t, 0.0, 1.0));
+}
+
+// 3-stop linear palette. t ∈ [0, 1] is split into two equal segments.
+[[maybe_unused]] static inline float3 palette3(float t, float3 c0, float3 c1, float3 c2) {
+    t = clamp(t, 0.0, 1.0) * 2.0;
+    float f = fract(t);
+    return (t < 1.0) ? mix(c0, c1, f) : mix(c1, c2, f);
+}
+
+// 4-stop linear palette. t ∈ [0, 1] split into three equal segments.
+[[maybe_unused]] static inline float3 palette4Lin(float t, float3 c0, float3 c1, float3 c2, float3 c3) {
+    t = clamp(t, 0.0, 1.0) * 3.0;
+    int i = clamp(int(floor(t)), 0, 2);
+    float f = t - float(i);
+    if (i == 0) return mix(c0, c1, f);
+    if (i == 1) return mix(c1, c2, f);
+    return mix(c2, c3, f);
+}
+
+// 4-stop cyclic palette. t wraps; good for continuous color flow.
+[[maybe_unused]] static inline float3 palette4Cyc(float t, float3 c0, float3 c1, float3 c2, float3 c3) {
+    t = fract(t) * 4.0;
+    int i = int(floor(t)) % 4;
+    float f = fract(t);
+    if (i == 0) return mix(c0, c1, f);
+    if (i == 1) return mix(c1, c2, f);
+    if (i == 2) return mix(c2, c3, f);
+    return mix(c3, c0, f);
+}
+
 // ---------- 1. Plasma ----------
 // params: p0.x=scale, p0.y=speed, p0.z=bassReact, p0.w=brightness
-// colors: c0 = tint
+// colors: c0..c3 = 4-stop cyclic palette
 fragment float4 fragment_plasma(VOut in [[stage_in]],
                                 constant AudioUniforms& u [[buffer(0)]],
                                 constant PresetParams& p [[buffer(1)]]) {
@@ -60,7 +95,6 @@ fragment float4 fragment_plasma(VOut in [[stage_in]],
     float speed      = p.p0.y;
     float bassReact  = p.p0.z;
     float brightness = p.p0.w;
-    float3 tint      = p.c0.rgb;
 
     float aspect = u.resolution.x / max(u.resolution.y, 1.0);
     float2 uv = (in.uv * 2.0 - 1.0);
@@ -75,15 +109,15 @@ fragment float4 fragment_plasma(VOut in [[stage_in]],
     v *= 0.25;
     v += u.bass * bassReact;
 
-    float3 col = palette(v + u.beat * 0.15);
-    col *= tint;
+    float phase = v * 0.5 + 0.5 + u.beat * 0.1;
+    float3 col = palette4Cyc(phase, p.c0.rgb, p.c1.rgb, p.c2.rgb, p.c3.rgb);
     col *= brightness * (0.55 + 0.45 * (u.loudness + u.beat * 0.4));
     return float4(col, 1.0);
 }
 
 // ---------- 2. Tunnel ----------
 // params: p0.x=ringSpeed, p0.y=spokes, p0.z=beatPunch, p0.w=bassReact
-// colors: c0 = tint
+// colors: c0..c3 = 4-stop cyclic palette
 fragment float4 fragment_tunnel(VOut in [[stage_in]],
                                 constant AudioUniforms& u [[buffer(0)]],
                                 constant PresetParams& p [[buffer(1)]]) {
@@ -91,7 +125,6 @@ fragment float4 fragment_tunnel(VOut in [[stage_in]],
     float spokes    = max(1.0, p.p0.y);
     float beatPunch = p.p0.z;
     float bassReact = p.p0.w;
-    float3 tint     = p.c0.rgb;
 
     float aspect = u.resolution.x / max(u.resolution.y, 1.0);
     float2 uv = in.uv * 2.0 - 1.0;
@@ -106,8 +139,8 @@ fragment float4 fragment_tunnel(VOut in [[stage_in]],
     float sp     = sin(a * spokes + t * 1.3);
     float v = rings * 0.55 + sp * 0.3;
 
-    float3 col = palette(depth * 0.12 + t * 0.07);
-    col *= tint;
+    float3 col = palette4Cyc(depth * 0.12 + t * 0.07,
+                             p.c0.rgb, p.c1.rgb, p.c2.rgb, p.c3.rgb);
     col *= 0.4 + 0.6 * (v * 0.5 + 0.5);
     col *= smoothstep(0.0, 0.25, r);
     col *= 1.0 + u.beat * beatPunch;
@@ -116,16 +149,15 @@ fragment float4 fragment_tunnel(VOut in [[stage_in]],
 
 // ---------- 3. Spectrum bars ----------
 // params: p0.x=gain, p0.y=peak, p0.z=floorGlow
-// colors: c0 = tint
+// colors: c0..c2 = 3-stop palette across x (low → high freq)
 fragment float4 fragment_bars(VOut in [[stage_in]],
                               constant AudioUniforms& u [[buffer(0)]],
                               constant PresetParams& p [[buffer(1)]],
                               texture2d<float> spec [[texture(0)]]) {
     constexpr sampler s(address::clamp_to_edge, filter::linear);
-    float gain       = p.p0.x;
-    float peakAmt    = p.p0.y;
-    float floorAmt   = p.p0.z;
-    float3 tint      = p.c0.rgb;
+    float gain     = p.p0.x;
+    float peakAmt  = p.p0.y;
+    float floorAmt = p.p0.z;
 
     float2 uv = in.uv;
     uv.y = 1.0 - uv.y;
@@ -134,19 +166,19 @@ fragment float4 fragment_bars(VOut in [[stage_in]],
     float h = mag * gain;
     float below = step(uv.y, h);
 
-    float3 col = palette(uv.x * 0.7 + u.time * 0.03) * below;
+    float3 barCol = palette3(uv.x, p.c0.rgb, p.c1.rgb, p.c2.rgb);
+    float3 col = barCol * below;
 
     float peak = smoothstep(h - 0.008, h, uv.y) * step(uv.y, h + 0.002);
     col += peak * peakAmt;
 
-    col += palette(uv.x) * 0.15 * exp(-uv.y * 5.0) * (0.2 + u.loudness) * floorAmt;
-    col *= tint;
+    col += barCol * 0.15 * exp(-uv.y * 5.0) * (0.2 + u.loudness) * floorAmt;
     return float4(col, 1.0);
 }
 
 // ---------- 4. Oscilloscope ----------
 // params: p0.x=thickness, p0.y=glow, p0.z=scanlines(0/1), p0.w=grid(0/1)
-// colors: c0 = trace
+// colors: c0 = trace, c1 = glow/grid tint
 fragment float4 fragment_oscilloscope(VOut in [[stage_in]],
                                       constant AudioUniforms& u [[buffer(0)]],
                                       constant PresetParams& p [[buffer(1)]],
@@ -158,6 +190,7 @@ fragment float4 fragment_oscilloscope(VOut in [[stage_in]],
     float scanlines = step(0.5, p.p0.z);
     float grid      = step(0.5, p.p0.w);
     float3 trace    = p.c0.rgb;
+    float3 glowCol  = p.c1.rgb;
 
     float2 uv = in.uv;
 
@@ -167,11 +200,11 @@ fragment float4 fragment_oscilloscope(VOut in [[stage_in]],
 
     float core = exp(-d * (180.0 / thickness));
     float glow = exp(-d * (22.0 / thickness)) * 0.35 * glowAmt;
-    float3 col = trace * core + trace * 0.35 * glow;
+    float3 col = trace * core + glowCol * glow;
 
     float gx = smoothstep(0.98, 1.0, sin(uv.x * 40.0 + 1.5708) * 0.5 + 0.5);
     float gy = smoothstep(0.98, 1.0, sin(uv.y * 28.0 + 1.5708) * 0.5 + 0.5);
-    col += trace * 0.12 * (gx + gy) * grid;
+    col += glowCol * 0.35 * (gx + gy) * grid;
 
     float scan = 0.82 + 0.18 * (0.5 + 0.5 * sin(uv.y * u.resolution.y * 3.14159));
     col *= mix(1.0, scan, scanlines);
@@ -181,7 +214,7 @@ fragment float4 fragment_oscilloscope(VOut in [[stage_in]],
 
 // ---------- 5. Apple Bloom ----------
 // params: p0.x=blobCount, p0.y=speed, p0.z=bassReact, p0.w=gamma
-// colors: c0 = tint
+// colors: c0..c3 = 4-stop cyclic palette indexed by blob
 fragment float4 fragment_bloom(VOut in [[stage_in]],
                                constant AudioUniforms& u [[buffer(0)]],
                                constant PresetParams& p [[buffer(1)]]) {
@@ -189,7 +222,6 @@ fragment float4 fragment_bloom(VOut in [[stage_in]],
     float speed    = p.p0.y;
     float bassReact= p.p0.z;
     float gamma    = max(0.1, p.p0.w);
-    float3 tint    = p.c0.rgb;
 
     float aspect = u.resolution.x / max(u.resolution.y, 1.0);
     float2 uv = in.uv - 0.5;
@@ -205,9 +237,10 @@ fragment float4 fragment_bloom(VOut in [[stage_in]],
         float d = length(uv - c);
         float r = 0.30 + 0.10 * sin(t + fi) + u.bass * bassReact + u.beat * 0.08;
         float blob = smoothstep(r, r - 0.35, d);
-        col += palette(fi * 0.23 + u.time * 0.04) * blob * 0.55;
+        float3 blobCol = palette4Cyc(fi / max(float(blobCount), 1.0) + u.time * 0.04,
+                                     p.c0.rgb, p.c1.rgb, p.c2.rgb, p.c3.rgb);
+        col += blobCol * blob * 0.55;
     }
-    col *= tint;
     col *= 1.0 - length(uv) * 0.4;
     col = pow(col, float3(gamma));
     return float4(col, 1.0);

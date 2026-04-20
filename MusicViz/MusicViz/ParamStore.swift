@@ -63,18 +63,27 @@ final class ParamStore: ObservableObject {
                 default: break
                 }
             case .color(let i) where i >= 0 && i < 4:
-                let rgba = v.asColor
-                switch i {
-                case 0: params.c0 = rgba
-                case 1: params.c1 = rgba
-                case 2: params.c2 = rgba
-                case 3: params.c3 = rgba
-                default: break
+                writeColor(v.asColor, to: i, in: &params)
+            case .palette(let indices):
+                let stops = v.asPalette
+                for (j, slotIdx) in indices.enumerated() {
+                    let rgba = j < stops.count ? stops[j] : SIMD4<Float>(1, 1, 1, 1)
+                    writeColor(rgba, to: slotIdx, in: &params)
                 }
             default: break
             }
         }
         return params
+    }
+
+    private func writeColor(_ rgba: SIMD4<Float>, to slot: Int, in params: inout PresetParams) {
+        switch slot {
+        case 0: params.c0 = rgba
+        case 1: params.c1 = rgba
+        case 2: params.c2 = rgba
+        case 3: params.c3 = rgba
+        default: break
+        }
     }
 
     // MARK: - Persistence

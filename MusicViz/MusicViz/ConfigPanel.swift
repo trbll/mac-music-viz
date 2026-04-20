@@ -151,7 +151,33 @@ private struct ParamRow: View {
                 }
             }
             .pickerStyle(.segmented)
+        case .palette(let count):
+            HStack(spacing: 6) {
+                ForEach(0..<count, id: \.self) { i in
+                    ColorPicker("", selection: paletteBinding(at: i, count: count),
+                                supportsOpacity: false)
+                        .labelsHidden()
+                        .frame(width: 28, height: 22)
+                }
+                Spacer(minLength: 0)
+            }
         }
+    }
+
+    private func paletteBinding(at i: Int, count: Int) -> Binding<Color> {
+        Binding(
+            get: {
+                let stops = params.value(presetId: presetId, spec: spec).asPalette
+                guard i < stops.count else { return .white }
+                return Color(rgba: stops[i])
+            },
+            set: { newColor in
+                var stops = params.value(presetId: presetId, spec: spec).asPalette
+                while stops.count < count { stops.append(.init(1, 1, 1, 1)) }
+                stops[i] = newColor.toRGBA()
+                params.set(.palette(stops), presetId: presetId, key: spec.id)
+            }
+        )
     }
 
     @ViewBuilder

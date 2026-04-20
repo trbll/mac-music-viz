@@ -103,8 +103,15 @@ float wav = waveform.sample(s, float2(uv.x, 0.5)).r;   // -1..1-ish
 Bind whichever textures you use — omit them from the signature if you don't.
 
 ### Shared helpers in `Shaders.metal`
-- `palette(float t)` — IQ-style cyclic 3-channel palette, `t ∈ [0, 1]`.
-  Add more if needed (keep them `static inline`).
+- `palette(float t)` — procedural IQ-style cyclic 3-channel palette. Use
+  when you don't want to expose colors to the user.
+- `palette2(t, c0, c1)` — 2-stop linear gradient.
+- `palette3(t, c0, c1, c2)` — 3-stop linear palette.
+- `palette4Lin(t, c0, c1, c2, c3)` — 4-stop linear palette.
+- `palette4Cyc(t, c0, c1, c2, c3)` — 4-stop cyclic palette. `t` wraps.
+
+Prefer the stop-based helpers with user-defined `PresetParams` colors over
+the hardcoded `palette()` — that's how users tweak a preset's color scheme.
 
 ### Vertex shader
 Don't write one. Use `vertex_fullscreen` — a big-triangle pass that hands the
@@ -118,15 +125,19 @@ top of the screen (matches image-space intuition).
 
 ## ParamSpec kinds — UI ↔ shader mapping
 
-| `Kind`                     | SwiftUI control | Persisted `ParamValue`  | Shader reads               |
-|----------------------------|-----------------|-------------------------|----------------------------|
-| `.slider(min, max)`        | `Slider`        | `.float(Float)`         | `p.p(k/4)[k%4]` (a float)  |
-| `.stepper(min, max)`       | `Stepper`       | `.int(Int)`             | `p.p(k/4)[k%4]` (as float) |
-| `.toggle`                  | `Toggle`        | `.bool(Bool)`           | `step(0.5, p.p…)` → 0 or 1 |
-| `.color`                   | `ColorPicker`   | `.color(SIMD4<Float>)`  | `p.c0/c1/c2/c3` (rgba)     |
-| `.picker(options: […])`    | `Picker`        | `.int(Int)` (option idx)| `p.p(k/4)[k%4]` (as float) |
+| `Kind`                     | SwiftUI control     | Persisted `ParamValue`       | Shader reads                    |
+|----------------------------|---------------------|------------------------------|---------------------------------|
+| `.slider(min, max)`        | `Slider`            | `.float(Float)`              | `p.p(k/4)[k%4]` (a float)       |
+| `.stepper(min, max)`       | `Stepper`           | `.int(Int)`                  | `p.p(k/4)[k%4]` (as float)      |
+| `.toggle`                  | `Toggle`            | `.bool(Bool)`                | `step(0.5, p.p…)` → 0 or 1      |
+| `.color`                   | `ColorPicker`       | `.color(SIMD4<Float>)`       | `p.c0/c1/c2/c3` (rgba)          |
+| `.picker(options: […])`    | `Picker`            | `.int(Int)` (option idx)     | `p.p(k/4)[k%4]` (as float)      |
+| `.palette(count: N)`       | Row of color wells  | `.palette([SIMD4<Float>])`   | `p.c<indices[0..N-1]>` (rgba×N) |
 
-`k` is the `slot: .float(k)` index, `0..<16`. Color slots are `0..<4`.
+`k` is the `slot: .float(k)` index, `0..<16`. Color slots are `0..<4`. A
+palette spec uses `slot: .palette([...])` — a list of color slot indices
+(each `0..<4`). The first stop lands in the first listed slot, etc. Feed
+them to `palette2/3/4Lin/palette4Cyc` to get user-controlled gradients.
 
 ## Adding a preset — worked example
 
@@ -140,7 +151,7 @@ Append to `Shaders.metal`:
 ```metal
 // ---------- 6. Rings ----------
 // params: p0.x=ringCount, p0.y=pulseSpeed, p0.z=beatFlash, p0.w=thickness
-// colors: c0 = ringColor
+// colors: c0..c2 = 3-stop palette indexed by radius
 fragment float4 fragment_rings(VOut in [[stage_in]],
                                constant AudioUniforms& u [[buffer(0)]],
                                constant PresetParams& p [[buffer(1)]]) {
@@ -148,7 +159,6 @@ fragment float4 fragment_rings(VOut in [[stage_in]],
     float pulseSpeed = p.p0.y;
     float beatFlash  = p.p0.z;
     float thickness  = max(0.01, p.p0.w);
-    float3 color     = p.c0.rgb;
 
     float aspect = u.resolution.x / max(u.resolution.y, 1.0);
     float2 uv = in.uv * 2.0 - 1.0;
@@ -161,8 +171,7 @@ fragment float4 fragment_rings(VOut in [[stage_in]],
     float rings = fract(r * ringCount - phase);
     float edge  = smoothstep(thickness, 0.0, abs(rings - 0.5));
 
-    float3 col = color * edge;
-    col *= 0.5 + 0.5 * palette(r * 0.2 + u.time * 0.05);
+    float3 col = palette3(clamp(r, 0.0, 1.0), p.c0.rgb, p.c1.rgb, p.c2.rgb) * edge;
     col *= 1.0 + u.beat * beatFlash;
     col *= smoothstep(1.6, 0.2, r);   // radial falloff
     return float4(col, 1.0);
@@ -185,8 +194,13 @@ private let rings = Preset(
               defaultValue: .float(1.2), slot: .float(2)),
         .init(id: "thickness",  label: "Thickness",   kind: .slider(min: 0.05, max: 0.8),
               defaultValue: .float(0.25), slot: .float(3)),
-        .init(id: "color",      label: "Ring color",  kind: .color,
-              defaultValue: .color(.init(0.9, 0.6, 1.0, 1.0)), slot: .color(0)),
+        .init(id: "palette",    label: "Palette",     kind: .palette(count: 3),
+              defaultValue: .palette([
+                  .init(0.9, 0.6, 1.0, 1.0),
+                  .init(0.4, 0.8, 1.0, 1.0),
+                  .init(1.0, 0.9, 0.5, 1.0),
+              ]),
+              slot: .palette([0, 1, 2])),
     ]
 )
 ```
