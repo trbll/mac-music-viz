@@ -32,7 +32,7 @@ in seconds.
 
 ## Uniform layout contract (Swift ↔ MSL)
 
-Two structs are shared across the language boundary. Their layout *must*
+Four structs are shared across the language boundary. Their layout *must*
 match byte-for-byte. If you change either side, change both.
 
 ### `AudioUniforms` (`buffer(0)`)
@@ -62,6 +62,43 @@ offset 112  float4 c3           // color slot 3
 `p(i/4).(x|y|z|w)` by `ParamStore.packed`) or `.color(i)` where `i ∈ 0..<4`
 (mapped to `c0..c3`). Bools pack as `0.0`/`1.0` floats; ints cast to float.
 
+### `InteractionUniforms` (`buffer(2)`) — 48 bytes
+```
+offset 0   float2 mouse
+offset 8   float2 previousMouse
+offset 16  float2 velocity
+offset 24  float2 dragStart
+offset 32  float  isActive
+offset 36  float  isDown
+offset 40  float  clickPulse
+offset 44  float  idleTime
+```
+
+Primary preset shaders can opt into this buffer for mouse-aware effects. It is
+always bound, but old shaders can omit it from the signature.
+
+### `PostUniforms` (`buffer(1)` in `fragment_post`) — 48-byte stride
+```
+offset 0   float2 resolution
+offset 8   float  bloomIntensity
+offset 12  float  bloomRadius
+offset 16  float  bloomThreshold
+offset 20  float  lensStrength
+offset 24  float  rippleStrength
+offset 28  float  chromaStrength
+offset 32  float  vignette
+offset 36  float  trailAmount
+offset 40  float  trailDecay      // total 44 bytes, stride rounds to 48
+```
+
+`PostUniforms` is used by the post-processing shader, not by primary preset
+shaders. If it changes, update `PostSettings.swift` and `Shaders.metal`
+together.
+
+`PostSettings` is keyed by `preset.id`, with preset-specific defaults and
+stored overrides under `MusicViz.PostSettings.v2`. Mouse ripple/lens/chroma
+are post settings too, so tune them per preset rather than as global values.
+
 ## Shader inputs reference
 
 Every fragment shader gets the same plumbing. Knowing what's available keeps
@@ -89,6 +126,21 @@ struct PresetParams {
 };
 ```
 
+### `InteractionUniforms` at `[[buffer(2)]]`
+```metal
+struct InteractionUniforms {
+    float2 mouse;         // normalized 0..1, top-left origin
+    float2 previousMouse; // previous mouse sample, normalized
+    float2 velocity;      // smoothed normalized units/sec
+    float2 dragStart;     // normalized click/drag start
+    float  isActive;      // cursor inside, dragging, or recently moved
+    float  isDown;        // mouse button down
+    float  clickPulse;    // 1 on click, exponential decay
+    float  idleTime;      // seconds since last pointer event
+};
+```
+Only include this argument in shaders that use mouse input.
+
 ### Textures
 ```metal
 texture2d<float> spectrum [[texture(0)]];   // 128 × 1, R32Float, log-spaced bins
@@ -101,6 +153,13 @@ float mag = spectrum.sample(s, float2(uv.x, 0.5)).r;   // 0..~1 after window+nor
 float wav = waveform.sample(s, float2(uv.x, 0.5)).r;   // -1..1-ish
 ```
 Bind whichever textures you use — omit them from the signature if you don't.
+
+### Render path
+Primary presets render into an HDR `rgba16Float` scene texture. The shared
+`fragment_post` shader then applies bloom, history trails, mouse ripple/lens,
+chroma, and vignette into a second HDR texture. `fragment_copy` copies that
+composited result into the drawable. Post and mouse effect intensities are
+resolved per preset by `PostSettings`.
 
 ### Shared helpers in `Shaders.metal`
 - `palette(float t)` — procedural IQ-style cyclic 3-channel palette. Use
@@ -128,7 +187,7 @@ top of the screen (matches image-space intuition).
 | `Kind`                     | SwiftUI control     | Persisted `ParamValue`       | Shader reads                    |
 |----------------------------|---------------------|------------------------------|---------------------------------|
 | `.slider(min, max)`        | `Slider`            | `.float(Float)`              | `p.p(k/4)[k%4]` (a float)       |
-| `.stepper(min, max)`       | `Stepper`           | `.int(Int)`                  | `p.p(k/4)[k%4]` (as float)      |
+| `.stepper(min, max)`       | Quantized `Slider`  | `.int(Int)`                  | `p.p(k/4)[k%4]` (as float)      |
 | `.toggle`                  | `Toggle`            | `.bool(Bool)`                | `step(0.5, p.p…)` → 0 or 1      |
 | `.color`                   | `ColorPicker`       | `.color(SIMD4<Float>)`       | `p.c0/c1/c2/c3` (rgba)          |
 | `.picker(options: […])`    | `Picker`            | `.int(Int)` (option idx)     | `p.p(k/4)[k%4]` (as float)      |

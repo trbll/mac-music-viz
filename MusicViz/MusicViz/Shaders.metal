@@ -24,6 +24,30 @@ struct PresetParams {
     float4 c3;
 };
 
+struct InteractionUniforms {
+    float2 mouse;
+    float2 previousMouse;
+    float2 velocity;
+    float2 dragStart;
+    float isActive;
+    float isDown;
+    float clickPulse;
+    float idleTime;
+};
+
+struct PostUniforms {
+    float2 resolution;
+    float bloomIntensity;
+    float bloomRadius;
+    float bloomThreshold;
+    float lensStrength;
+    float rippleStrength;
+    float chromaStrength;
+    float vignette;
+    float trailAmount;
+    float trailDecay;
+};
+
 struct VOut {
     float4 position [[position]];
     float2 uv;
@@ -127,6 +151,83 @@ vertex VOut vertex_fullscreen(uint vid [[vertex_id]]) {
     float2 ba = b - a;
     float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-4), 0.0, 1.0);
     return length(pa - ba * h);
+}
+
+[[maybe_unused]] static inline float luminance(float3 c) {
+    return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
+
+[[maybe_unused]] static inline float3 brightPart(float3 c, float threshold) {
+    return c * smoothstep(threshold, threshold + 0.65, luminance(c));
+}
+
+// ---------- Post-processing ----------
+// buffers: 0=AudioUniforms, 1=PostUniforms, 2=InteractionUniforms
+// textures: 0=current scene, 1=previous composited frame
+fragment float4 fragment_post(VOut in [[stage_in]],
+                              constant AudioUniforms& u [[buffer(0)]],
+                              constant PostUniforms& post [[buffer(1)]],
+                              constant InteractionUniforms& interaction [[buffer(2)]],
+                              texture2d<float> scene [[texture(0)]],
+                              texture2d<float> history [[texture(1)]]) {
+    constexpr sampler s(address::clamp_to_edge, filter::linear);
+    float2 uv = in.uv;
+    float2 px = 1.0 / max(post.resolution, float2(1.0));
+    float aspect = post.resolution.x / max(post.resolution.y, 1.0);
+
+    float2 mouseDelta = uv - interaction.mouse;
+    float2 mouseAspect = float2(mouseDelta.x * aspect, mouseDelta.y);
+    float mouseDistance = length(mouseAspect);
+    float active = interaction.isActive;
+
+    float2 mouseDir = mouseDistance > 0.0001 ? mouseDelta / mouseDistance : float2(0.0);
+    float lens = exp(-mouseDistance * mouseDistance * 15.0) * post.lensStrength * active;
+    float rippleSource = interaction.clickPulse * 0.85 + interaction.isDown * 0.35 + active * 0.12;
+    float ripple = sin(mouseDistance * 80.0 - u.time * 9.0) * exp(-mouseDistance * 7.5);
+    float2 sampleUv = uv + mouseDir * (lens * 0.035 + ripple * post.rippleStrength * rippleSource * 0.030);
+
+    float speed = clamp(length(interaction.velocity), 0.0, 4.0);
+    float2 velocityDir = speed > 0.001 ? interaction.velocity / speed : float2(1.0, 0.0);
+    float2 chromaOffset = velocityDir * px * post.chromaStrength * (2.0 + speed * 5.0) * active;
+    chromaOffset += px * post.chromaStrength * u.beat * 2.0;
+
+    float3 base;
+    base.r = scene.sample(s, sampleUv + chromaOffset).r;
+    base.g = scene.sample(s, sampleUv).g;
+    base.b = scene.sample(s, sampleUv - chromaOffset).b;
+
+    float3 bloom = float3(0.0);
+    for (int ring = 1; ring <= 3; ring++) {
+        float radius = float(ring) * post.bloomRadius * (1.4 + u.loudness * 0.65);
+        for (int tap = 0; tap < 8; tap++) {
+            float a = (float(tap) + float(ring) * 0.37) * 0.78539816;
+            float2 offset = float2(cos(a), sin(a)) * px * radius;
+            bloom += brightPart(scene.sample(s, sampleUv + offset).rgb, post.bloomThreshold);
+        }
+    }
+    bloom /= 24.0;
+
+    float3 col = base + bloom * post.bloomIntensity * (1.0 + u.loudness * 0.45 + u.beat * 0.22);
+    col = 1.0 - exp(-col * 1.05);
+
+    if (post.trailAmount > 0.001) {
+        float3 previous = history.sample(s, uv - velocityDir * px * speed * 1.5).rgb * post.trailDecay;
+        float trailBlend = post.trailAmount * (0.65 + u.loudness * 0.35);
+        col = mix(col, max(col, previous), trailBlend);
+    }
+
+    float2 centered = uv * 2.0 - 1.0;
+    centered.x *= aspect;
+    float vignette = smoothstep(1.55, 0.35, length(centered));
+    col *= mix(1.0, vignette, post.vignette);
+
+    return float4(col, 1.0);
+}
+
+fragment float4 fragment_copy(VOut in [[stage_in]],
+                              texture2d<float> source [[texture(0)]]) {
+    constexpr sampler s(address::clamp_to_edge, filter::linear);
+    return float4(source.sample(s, in.uv).rgb, 1.0);
 }
 
 // ---------- 1. Plasma ----------

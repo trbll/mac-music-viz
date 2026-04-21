@@ -31,12 +31,16 @@ set of Metal shader presets.
 | `space`       | Next preset                                         |
 | `⌘,`          | Toggle effect settings panel                        |
 | gear icon     | Toggle effect settings panel                        |
-| mouse move    | Wake overlay (auto-hides after 2.5s of no activity) |
+| mouse move    | Wake overlay and drive post effects                 |
+| mouse click / drag | Trigger ripple, lens, and chroma interaction   |
 
-The settings panel has per-preset sliders, toggles, and color pickers. Every
-tweak auto-saves to `UserDefaults` under the key `MusicViz.ParamStore.v1`. Per
-parameter you can reset to default (↺ icon); you can also reset all parameters
-for the current preset from the bottom button.
+The settings panel has per-preset sliders, toggles, color pickers, and
+per-preset post/mouse controls for bloom, trails, mouse ripple/lens, chroma,
+and vignette. Every preset tweak auto-saves to `UserDefaults` under the key
+`MusicViz.ParamStore.v1`; post settings save under `MusicViz.PostSettings.v2`.
+Per parameter you can reset to default (↺ icon); you can reset the current
+preset's post settings from the Post-processing section, or reset all shader
+parameters for the current preset from the bottom button.
 
 ## Presets
 
@@ -64,13 +68,13 @@ for the current preset from the bottom button.
                                                     │
                                           snapshot  │ each frame
                                                     ▼
-                   ┌─────────────┐          ┌──────────────────┐
-                   │ PresetManager│         │  MetalRenderer   │
-                   │  ParamStore  │────────▶│  (MTKView)       │
-                   └─────────────┘  params  └──────────────────┘
+                   ┌────────────────┐       ┌──────────────────┐
+                   │ PresetManager  │       │  MetalRenderer   │
+                   │ ParamStore/Post│──────▶│  (MTKView)       │
+                   └────────────────┘ params└──────────────────┘
                                                     │
                                                     ▼
-                                             Fragment shader
+                                           Preset → Post → Display
                                              (Shaders.metal)
 ```
 
@@ -83,11 +87,15 @@ for the current preset from the bottom button.
   log-spaced spectrum, 256-sample waveform).
 - **MetalRenderer** owns one `MTLRenderPipelineState` per preset (cached on
   first use), uploads the spectrum and waveform to 1D R32Float textures, and
-  passes `AudioUniforms` + `PresetParams` buffers to the fragment shader.
+  renders through a multipass pipeline: preset into an HDR scene texture,
+  post-processing with history feedback, then final display copy.
 - **PresetManager** declares the preset list and each preset's `ParamSpec[]`
   (float slider / int stepper / bool toggle / color picker / enum picker).
 - **ParamStore** persists per-preset values to UserDefaults and packs them
   into the GPU-ready `PresetParams` struct each frame.
+- **PostSettings** persists per-preset post/mouse controls and packs
+  `PostUniforms`; pointer state is packed into `InteractionUniforms` for
+  post effects and mouse-aware shaders.
 
 ## Extending
 
@@ -120,6 +128,7 @@ music-viz/
         ├── PresetManager.swift        — preset list + per-preset ParamSpec
         ├── ParamSpec.swift            — param types + Codable + ShaderSlot
         ├── ParamStore.swift           — persistence + packed() for shader
+        ├── PostSettings.swift         — post-process settings + uniforms
         ├── ConfigPanel.swift          — settings overlay UI
         ├── GlassEffects.swift         — translucent panel/chip modifiers
         └── Shaders.metal              — vertex_fullscreen + fragment_*
@@ -129,8 +138,8 @@ music-viz/
 
 - [ ] Upgrade `GlassEffects.swift` to real Liquid Glass (`.glassEffect(...)`)
       once on Xcode 26 / macOS 26
-- [ ] v2: mouse interaction uniforms + multipass post-processing
-      (bloom, trails, ripples, lens effects)
+- [ ] Mouse-native presets that use `InteractionUniforms` inside the primary
+      shader, not only the post pass
 - [ ] More presets (particles, fluid sim, CRT raymarch)
 - [ ] Fullscreen on dedicated display from menu
 - [ ] Preset export / import as JSON

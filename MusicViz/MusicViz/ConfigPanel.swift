@@ -3,6 +3,7 @@ import SwiftUI
 struct ConfigPanel: View {
     @ObservedObject var presets: PresetManager
     @ObservedObject var params: ParamStore
+    @ObservedObject var post: PostSettings
     let onClose: () -> Void
 
     var body: some View {
@@ -17,6 +18,10 @@ struct ConfigPanel: View {
                     ForEach(preset.params) { spec in
                         ParamRow(presetId: preset.id, spec: spec, params: params)
                     }
+
+                    Divider().opacity(0.3)
+
+                    PostSection(presetId: preset.id, post: post)
                 }
                 .padding(.vertical, 4)
             }
@@ -58,6 +63,66 @@ struct ConfigPanel: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
+        }
+    }
+}
+
+// MARK: - PostSection
+
+private struct PostSection: View {
+    let presetId: String
+    @ObservedObject var post: PostSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Post-processing")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                Button {
+                    post.reset(presetId: presetId)
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Reset post effects")
+            }
+
+            ForEach(PostSetting.allCases, id: \.rawValue) { setting in
+                PostSlider(label: setting.label,
+                           value: binding(for: setting),
+                           range: setting.range)
+            }
+        }
+    }
+
+    private func binding(for setting: PostSetting) -> Binding<Float> {
+        Binding(
+            get: { post.value(presetId: presetId, setting: setting) },
+            set: { post.set($0, presetId: presetId, setting: setting) }
+        )
+    }
+}
+
+private struct PostSlider: View {
+    let label: String
+    @Binding var value: Float
+    let range: ClosedRange<Float>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(label)
+                    .font(.callout)
+                Spacer()
+                Text(String(format: "%.2f", value))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(value: $value, in: range)
         }
     }
 }
