@@ -33,14 +33,17 @@ set of Metal shader presets.
 | gear icon     | Toggle effect settings panel                        |
 | mouse move    | Wake overlay and drive post effects                 |
 | mouse click / drag | Trigger ripple, lens, and chroma interaction   |
+| image drag    | Load a source image for Image Reactor               |
 
 The settings panel has per-preset sliders, toggles, color pickers, and
 per-preset post/mouse controls for bloom, trails, mouse ripple/lens, chroma,
-and vignette. Every preset tweak auto-saves to `UserDefaults` under the key
-`MusicViz.ParamStore.v1`; post settings save under `MusicViz.PostSettings.v2`.
-Per parameter you can reset to default (↺ icon); you can reset the current
-preset's post settings from the Post-processing section, or reset all shader
-parameters for the current preset from the bottom button.
+and vignette. Image Reactor also exposes a source-image picker and accepts
+dragged image files; the image itself is not persisted. Every preset tweak
+auto-saves to `UserDefaults` under the key `MusicViz.ParamStore.v1`; post
+settings save under `MusicViz.PostSettings.v2`. Per parameter you can reset to
+default (↺ icon); you can reset the current preset's post settings from the
+Post-processing section, or reset all shader parameters for the current preset
+from the bottom button.
 
 ## Presets
 
@@ -57,6 +60,7 @@ parameters for the current preset from the bottom button.
 | Topographic Pulse | `fragment_topographic` | Contour-map terrain with pulse rings |
 | Spectral Constellation | `fragment_constellation` | Spectrum-driven stars and links |
 | Vinyl Scanner  | `fragment_vinyl`        | Record grooves, waveform wobble, scan beam |
+| Image Reactor  | `fragment_image_reactor` | User image remixed by audio and mouse modes |
 
 ## Architecture
 
@@ -86,9 +90,10 @@ parameters for the current preset from the bottom button.
   snapshot (bass/mid/treble energies, RMS loudness, beat onset, 128-bin
   log-spaced spectrum, 256-sample waveform).
 - **MetalRenderer** owns one `MTLRenderPipelineState` per preset (cached on
-  first use), uploads the spectrum and waveform to 1D R32Float textures, and
-  renders through a multipass pipeline: preset into an HDR scene texture,
-  post-processing with history feedback, then final display copy.
+  first use), uploads the spectrum and waveform to 1D R32Float textures,
+  uploads the optional source image as `texture(2)`, and renders through a
+  multipass pipeline: preset into an HDR scene texture, post-processing with
+  history feedback, then final display copy.
 - **PresetManager** declares the preset list and each preset's `ParamSpec[]`
   (float slider / int stepper / bool toggle / color picker / enum picker).
 - **ParamStore** persists per-preset values to UserDefaults and packs them
@@ -96,6 +101,8 @@ parameters for the current preset from the bottom button.
 - **PostSettings** persists per-preset post/mouse controls and packs
   `PostUniforms`; pointer state is packed into `InteractionUniforms` for
   post effects and mouse-aware shaders.
+- **ImageSourceStore** owns the current in-memory source image for Image
+  Reactor. It deliberately does not save the image path or bytes.
 
 ## Extending
 
@@ -129,6 +136,7 @@ music-viz/
         ├── ParamSpec.swift            — param types + Codable + ShaderSlot
         ├── ParamStore.swift           — persistence + packed() for shader
         ├── PostSettings.swift         — post-process settings + uniforms
+        ├── ImageSourceStore.swift     — ephemeral image picker/drop source
         ├── ConfigPanel.swift          — settings overlay UI
         ├── GlassEffects.swift         — translucent panel/chip modifiers
         └── Shaders.metal              — vertex_fullscreen + fragment_*
@@ -138,8 +146,7 @@ music-viz/
 
 - [ ] Upgrade `GlassEffects.swift` to real Liquid Glass (`.glassEffect(...)`)
       once on Xcode 26 / macOS 26
-- [ ] Mouse-native presets that use `InteractionUniforms` inside the primary
-      shader, not only the post pass
+- [ ] More mouse-native image and particle modes
 - [ ] More presets (particles, fluid sim, CRT raymarch)
 - [ ] Fullscreen on dedicated display from menu
 - [ ] Preset export / import as JSON

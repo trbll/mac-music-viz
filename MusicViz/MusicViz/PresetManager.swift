@@ -20,7 +20,8 @@ final class PresetManager: ObservableObject {
         kaleidoscope,
         topographic,
         constellation,
-        vinyl
+        vinyl,
+        imageReactor
     ]
 
     @Published private(set) var index: Int = 0
@@ -279,6 +280,38 @@ private let vinyl = Preset(
                   .init(0.015, 0.015, 0.018, 1.0),
                   .init(0.86, 0.82, 0.70, 1.0),
                   .init(1.00, 0.24, 0.16, 1.0),
+              ]),
+              slot: .palette([0, 1, 2])),
+    ]
+)
+
+private let imageReactor = Preset(
+    id: "imageReactor", name: "Image Reactor", fragmentFunction: "fragment_image_reactor",
+    params: [
+        .init(id: "mode", label: "Mode",
+              kind: .picker(options: ["Liquid", "Pulse", "Chroma", "Glitch", "Mirror", "Wave", "Smear", "Shock"]),
+              defaultValue: .int(0), slot: .float(0)),
+        .init(id: "intensity", label: "Intensity", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.95), slot: .float(1)),
+        .init(id: "speed", label: "Speed", kind: .slider(min: 0, max: 3),
+              defaultValue: .float(0.72), slot: .float(2)),
+        .init(id: "scale", label: "Scale", kind: .slider(min: 0.5, max: 2.5),
+              defaultValue: .float(1.0), slot: .float(3)),
+        .init(id: "segments", label: "Segments", kind: .stepper(min: 3, max: 24),
+              defaultValue: .int(9), slot: .float(4)),
+        .init(id: "displace", label: "Displace", kind: .slider(min: 0, max: 1.5),
+              defaultValue: .float(0.70), slot: .float(5)),
+        .init(id: "colorBoost", label: "Color boost", kind: .slider(min: 0, max: 2),
+              defaultValue: .float(0.55), slot: .float(6)),
+        .init(id: "detail", label: "Detail", kind: .slider(min: 0, max: 1),
+              defaultValue: .float(0.35), slot: .float(7)),
+        .init(id: "margin", label: "Margin", kind: .slider(min: 0, max: 0.20),
+              defaultValue: .float(0.04), slot: .float(8)),
+        .init(id: "reactiveTint", label: "Reactive tint", kind: .palette(count: 3),
+              defaultValue: .palette([
+                  .init(0.06, 0.18, 0.28, 1.0),
+                  .init(0.22, 0.85, 1.00, 1.0),
+                  .init(1.00, 0.32, 0.54, 1.0),
               ]),
               slot: .palette([0, 1, 2])),
     ]

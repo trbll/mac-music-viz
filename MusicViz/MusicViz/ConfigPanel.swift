@@ -4,6 +4,7 @@ struct ConfigPanel: View {
     @ObservedObject var presets: PresetManager
     @ObservedObject var params: ParamStore
     @ObservedObject var post: PostSettings
+    @ObservedObject var imageSource: ImageSourceStore
     let onClose: () -> Void
 
     var body: some View {
@@ -17,6 +18,12 @@ struct ConfigPanel: View {
                 VStack(alignment: .leading, spacing: 16) {
                     ForEach(preset.params) { spec in
                         ParamRow(presetId: preset.id, spec: spec, params: params)
+                    }
+
+                    if preset.id == "imageReactor" {
+                        Divider().opacity(0.3)
+
+                        ImageSourceSection(imageSource: imageSource)
                     }
 
                     Divider().opacity(0.3)
@@ -63,6 +70,74 @@ struct ConfigPanel: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
+        }
+    }
+}
+
+// MARK: - ImageSourceSection
+
+private struct ImageSourceSection: View {
+    @ObservedObject var imageSource: ImageSourceStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Source image")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                if imageSource.hasImage {
+                    Button {
+                        imageSource.clear()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear image")
+                }
+            }
+
+            HStack(spacing: 10) {
+                if let thumbnail = imageSource.thumbnail {
+                    Image(nsImage: thumbnail)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 64, height: 48)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(.white.opacity(0.18), lineWidth: 1)
+                        )
+                } else {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(.secondary.opacity(0.12))
+                        .frame(width: 64, height: 48)
+                        .overlay {
+                            Image(systemName: "photo")
+                                .foregroundStyle(.secondary)
+                        }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(imageSource.imageName ?? "No image")
+                        .font(.caption)
+                        .lineLimit(1)
+                    Button {
+                        imageSource.chooseImage()
+                    } label: {
+                        Label("Choose image", systemImage: "photo.badge.plus")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            if let error = imageSource.errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
         }
     }
 }
@@ -201,18 +276,27 @@ private struct ParamRow: View {
             ), supportsOpacity: false)
             .labelsHidden()
         case .picker(let options):
-            Picker("", selection: Binding<Int>(
+            let selection = Binding<Int>(
                 get: {
-                    if case .int(let v) = params.value(presetId: presetId, spec: spec) { return v }
+                    if case .int(let v) = params.value(presetId: presetId, spec: spec) {
+                        return min(max(v, 0), max(options.count - 1, 0))
+                    }
                     return 0
                 },
                 set: { params.set(.int($0), presetId: presetId, key: spec.id) }
-            )) {
-                ForEach(0..<options.count, id: \.self) { i in
-                    Text(options[i]).tag(i)
+            )
+            if options.count <= 4 {
+                Picker("", selection: selection) {
+                    pickerOptions(options)
                 }
+                .pickerStyle(.segmented)
+            } else {
+                Picker("", selection: selection) {
+                    pickerOptions(options)
+                }
+                .pickerStyle(.menu)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .pickerStyle(.segmented)
         case .palette(let count):
             HStack(spacing: 10) {
                 ForEach(0..<count, id: \.self) { i in
@@ -223,6 +307,13 @@ private struct ParamRow: View {
                 }
                 Spacer(minLength: 0)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func pickerOptions(_ options: [String]) -> some View {
+        ForEach(0..<options.count, id: \.self) { i in
+            Text(options[i]).tag(i)
         }
     }
 
@@ -262,6 +353,15 @@ private struct ParamRow: View {
                 Text("\(i)")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
+            }
+        case .picker(let options):
+            if case .int(let i) = v,
+               i >= 0,
+               i < options.count {
+                Text(options[i])
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         default:
             EmptyView()

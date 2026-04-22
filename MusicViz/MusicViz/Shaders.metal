@@ -35,6 +35,12 @@ struct InteractionUniforms {
     float idleTime;
 };
 
+struct ImageUniforms {
+    float2 imageSize;
+    float hasImage;
+    float padding;
+};
+
 struct PostUniforms {
     float2 resolution;
     float bloomIntensity;
@@ -159,6 +165,47 @@ vertex VOut vertex_fullscreen(uint vid [[vertex_id]]) {
 
 [[maybe_unused]] static inline float3 brightPart(float3 c, float threshold) {
     return c * smoothstep(threshold, threshold + 0.65, luminance(c));
+}
+
+[[maybe_unused]] static inline float2 safeNormalize2(float2 v) {
+    float len = length(v);
+    return len > 1e-5 ? v / len : float2(0.0);
+}
+
+[[maybe_unused]] static inline float uvInside(float2 uv) {
+    return step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+}
+
+[[maybe_unused]] static inline float2 imageContainUv(float2 screenUv,
+                                                     constant AudioUniforms& u,
+                                                     constant ImageUniforms& imageInfo,
+                                                     float zoom,
+                                                     float margin) {
+    float viewAspect = u.resolution.x / max(u.resolution.y, 1.0);
+    float imageAspect = imageInfo.imageSize.x / max(imageInfo.imageSize.y, 1.0);
+    float inset = clamp(margin, 0.0, 0.45);
+    float2 available = float2(max(0.05, 1.0 - inset * 2.0));
+    float2 displaySize;
+    if (imageAspect > viewAspect) {
+        displaySize = float2(available.x, available.x * viewAspect / imageAspect);
+    } else {
+        displaySize = float2(available.y * imageAspect / viewAspect, available.y);
+    }
+    displaySize *= max(zoom, 0.05);
+    float2 centered = screenUv - 0.5;
+    return centered / max(displaySize, float2(0.001)) + 0.5;
+}
+
+[[maybe_unused]] static inline float3 imageFallback(float2 uv,
+                                                    float time,
+                                                    float3 c0,
+                                                    float3 c1,
+                                                    float3 c2) {
+    float2 p = uv * 2.0 - 1.0;
+    float n = fbm4(p * 2.4 + float2(time * 0.12, -time * 0.08));
+    n += 0.35 * sin((p.x + p.y) * 5.0 + time);
+    float glow = smoothstep(1.25, 0.10, length(p));
+    return palette3(fract(n * 0.55 + time * 0.035), c0, c1, c2) * (0.35 + glow * 0.65);
 }
 
 // ---------- Post-processing ----------
@@ -666,4 +713,140 @@ fragment float4 fragment_vinyl(VOut in [[stage_in]],
     col = mix(col, p.c0.rgb * 0.12, hole);
     col *= 1.0 - smoothstep(0.82, 1.15, r);
     return float4(col, 1.0);
+}
+
+// ---------- 12. Image Reactor ----------
+// params: p0.x=mode, p0.y=intensity, p0.z=speed, p0.w=scale,
+//         p1.x=segments, p1.y=displace, p1.z=colorBoost, p1.w=detail, p2.x=margin
+// colors: c0..c2 = fallback / reactive tint palette
+fragment float4 fragment_image_reactor(VOut in [[stage_in]],
+                                       constant AudioUniforms& u [[buffer(0)]],
+                                       constant PresetParams& p [[buffer(1)]],
+                                       constant InteractionUniforms& interaction [[buffer(2)]],
+                                       constant ImageUniforms& imageInfo [[buffer(3)]],
+                                       texture2d<float> spec [[texture(0)]],
+                                       texture2d<float> wave [[texture(1)]],
+                                       texture2d<float> image [[texture(2)]]) {
+    constexpr sampler s(address::clamp_to_edge, filter::linear);
+
+    int mode = int(clamp(round(p.p0.x), 0.0, 7.0));
+    float intensity = p.p0.y;
+    float speed = p.p0.z;
+    float scale = max(0.05, p.p0.w);
+    float segments = max(3.0, p.p1.x);
+    float displace = p.p1.y;
+    float colorBoost = p.p1.z;
+    float detail = p.p1.w;
+    float margin = p.p2.x;
+
+    float t = u.time * (0.22 + speed);
+    float audio = clamp(u.bass * 0.95 + u.mid * 0.45 + u.treble * 0.25 + u.beat * 0.75, 0.0, 2.5);
+    float aspect = u.resolution.x / max(u.resolution.y, 1.0);
+    float2 screen = in.uv * 2.0 - 1.0;
+    screen.x *= aspect;
+    float radius = length(screen);
+    float angle = atan2(screen.y, screen.x);
+    float specMag = spec.sample(s, float2(clamp(radius, 0.0, 1.0), 0.5)).r;
+    float wav = wave.sample(s, float2(fract(in.uv.x), 0.5)).r;
+
+    float hasSource = step(0.5, imageInfo.hasImage);
+    float beatZoom = (mode == 1) ? (u.bass * 0.10 + u.beat * 0.035) * intensity : 0.0;
+    float2 fitUv = imageContainUv(in.uv, u, imageInfo, scale * (1.0 + beatZoom), margin);
+    float2 srcUv = mix(in.uv, fitUv, hasSource);
+
+    if (mode == 0) {
+        float n = fbm4(in.uv * (2.2 + detail * 2.8) + float2(t * 0.11, -t * 0.07));
+        float ripple = sin(radius * (16.0 + specMag * 18.0) - t * 5.2 + u.bass * 4.0);
+        float2 dir = safeNormalize2(float2(cos(angle + n * 6.2831853), sin(angle + n * 6.2831853)));
+        srcUv += dir * ripple * 0.014 * displace * intensity * (0.35 + audio);
+    } else if (mode == 1) {
+        float pulse = sin(radius * 24.0 - t * 5.0) * exp(-radius * 1.6);
+        srcUv = 0.5 + (srcUv - 0.5) * (1.0 - pulse * 0.030 * displace * intensity * (u.bass + u.beat));
+        srcUv += safeNormalize2(srcUv - 0.5) * specMag * 0.018 * displace;
+    } else if (mode == 3) {
+        float slices = mix(18.0, 86.0, detail);
+        float slice = floor(in.uv.y * slices);
+        float gate = step(0.56, hash11(slice * 13.17 + floor(t * 9.0)));
+        float jitter = hash11(slice * 3.7 + floor(t * 13.0)) - 0.5;
+        srcUv.x += jitter * gate * displace * intensity * (0.018 + specMag * 0.070 + u.beat * 0.045);
+        srcUv.y += (hash11(slice + floor(t * 5.0)) - 0.5) * gate * u.treble * 0.018 * displace;
+    } else if (mode == 4) {
+        float2 q = srcUv - 0.5;
+        float r = length(q);
+        float a = atan2(q.y, q.x) + t * 0.15 + u.bass * 0.30;
+        float slice = 6.2831853 / segments;
+        float folded = abs(fract(a / slice + 0.5) - 0.5) * slice;
+        srcUv = 0.5 + float2(cos(folded), sin(folded)) * r * (1.0 + specMag * 0.12 * displace);
+    } else if (mode == 5) {
+        srcUv.y += wav * 0.12 * displace * intensity * (0.25 + u.mid + specMag);
+        srcUv.x += sin(in.uv.y * 28.0 + t * 4.0) * 0.010 * displace * (u.treble + u.beat);
+    } else if (mode == 7) {
+        float2 mouseDelta = in.uv - interaction.mouse;
+        float2 mouseAspect = float2(mouseDelta.x * aspect, mouseDelta.y);
+        float mouseDistance = length(mouseAspect);
+        float shockSource = interaction.clickPulse + interaction.isDown * 0.35 + u.beat * 0.42;
+        float shock = sin(mouseDistance * 72.0 - t * 8.5) * exp(-mouseDistance * 7.0) * shockSource;
+        float lens = exp(-mouseDistance * mouseDistance * 16.0) * interaction.isActive;
+        srcUv += safeNormalize2(mouseDelta) * (shock * 0.060 + lens * 0.026) * displace * intensity;
+    }
+
+    float3 matte = imageFallback(in.uv, t, p.c0.rgb, p.c1.rgb, p.c2.rgb) * (0.10 + u.loudness * 0.08);
+    matte += p.c0.rgb * 0.10;
+    float3 col;
+
+    if (mode == 2) {
+        float2 dir = safeNormalize2(float2(cos(t * 0.7) + wav, sin(t * 0.43) + 0.35));
+        float2 offset = dir * (0.008 + u.treble * 0.030 + u.beat * 0.018) * displace * intensity;
+        float3 sr = image.sample(s, srcUv + offset).rgb;
+        float3 sg = image.sample(s, srcUv).rgb;
+        float3 sb = image.sample(s, srcUv - offset).rgb;
+        float3 fr = imageFallback(srcUv + offset, t, p.c0.rgb, p.c1.rgb, p.c2.rgb);
+        float3 fg = imageFallback(srcUv, t, p.c0.rgb, p.c1.rgb, p.c2.rgb);
+        float3 fb = imageFallback(srcUv - offset, t, p.c0.rgb, p.c1.rgb, p.c2.rgb);
+        sr = mix(mix(fr, matte, hasSource), sr, hasSource * uvInside(srcUv + offset));
+        sg = mix(mix(fg, matte, hasSource), sg, hasSource * uvInside(srcUv));
+        sb = mix(mix(fb, matte, hasSource), sb, hasSource * uvInside(srcUv - offset));
+        col = float3(sr.r, sg.g, sb.b);
+    } else if (mode == 6) {
+        float velocity = clamp(length(interaction.velocity), 0.0, 8.0);
+        float2 dir = safeNormalize2(interaction.velocity + float2(cos(t), sin(t * 0.73)) * (0.08 + u.bass));
+        float amount = (0.010 + velocity * 0.006 + specMag * 0.045 + u.beat * 0.025) * displace * intensity;
+        col = float3(0.0);
+        float total = 0.0;
+        for (int tap = 0; tap < 6; tap++) {
+            float ft = float(tap);
+            float weight = 1.0 - ft * 0.11;
+            float2 tapUv = srcUv - dir * amount * ft;
+            float3 sampled = image.sample(s, tapUv).rgb;
+            float3 fallback = imageFallback(tapUv, t, p.c0.rgb, p.c1.rgb, p.c2.rgb);
+            col += mix(mix(fallback, matte, hasSource), sampled, hasSource * uvInside(tapUv)) * weight;
+            total += weight;
+        }
+        col /= max(total, 0.001);
+    } else {
+        float3 sampled = image.sample(s, srcUv).rgb;
+        float3 fallback = imageFallback(srcUv, t, p.c0.rgb, p.c1.rgb, p.c2.rgb);
+        col = mix(mix(fallback, matte, hasSource), sampled, hasSource * uvInside(srcUv));
+    }
+
+    float lum = luminance(col);
+    float3 tint = palette3(fract(lum + t * 0.035 + audio * 0.09), p.c0.rgb, p.c1.rgb, p.c2.rgb);
+    float tintBlend = clamp(colorBoost * 0.42, 0.0, 0.82);
+    float3 boosted = col * (1.0 + tint * colorBoost * (0.30 + audio * 0.18));
+    boosted += tint * colorBoost * (u.beat * 0.12 + specMag * 0.08);
+    col = mix(col, boosted, tintBlend);
+
+    if (mode == 3) {
+        float tear = step(0.985, hash21(float2(floor(in.uv.y * 120.0), floor(t * 18.0))));
+        col += tint * tear * (0.20 + u.treble * 0.80) * intensity;
+    }
+
+    float scan = 0.5 + 0.5 * sin(in.uv.y * u.resolution.y * 3.1415926);
+    float grain = hash21(floor(in.uv * max(u.resolution, float2(1.0))) + float2(floor(t * 29.0))) - 0.5;
+    col *= 1.0 - detail * 0.045 + scan * detail * 0.060;
+    col += grain * detail * 0.050 * (0.35 + audio);
+    col *= 0.82 + 0.18 * smoothstep(1.55, 0.18, radius);
+    col *= 0.88 + 0.12 * u.loudness + 0.08 * u.beat;
+
+    return float4(max(col, float3(0.0)), 1.0);
 }

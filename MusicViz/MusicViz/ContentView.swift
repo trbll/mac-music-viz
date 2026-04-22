@@ -6,6 +6,7 @@ struct ContentView: View {
     @StateObject private var presets: PresetManager
     @StateObject private var params: ParamStore
     @StateObject private var post: PostSettings
+    @StateObject private var imageSource: ImageSourceStore
 
     @State private var overlayVisible = true
     @State private var hideOverlayTask: Task<Void, Never>?
@@ -20,18 +21,19 @@ struct ContentView: View {
         _presets = StateObject(wrappedValue: pm)
         _params = StateObject(wrappedValue: ParamStore())
         _post = StateObject(wrappedValue: PostSettings())
+        _imageSource = StateObject(wrappedValue: ImageSourceStore())
     }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            MetalView(audio: audio.analyzer, presets: presets, params: params, post: post)
+            MetalView(audio: audio.analyzer, presets: presets, params: params, post: post, imageSource: imageSource)
                 .ignoresSafeArea()
                 .background(Color.black)
 
             overlayLayer
 
             if panelOpen {
-                ConfigPanel(presets: presets, params: params, post: post) {
+                ConfigPanel(presets: presets, params: params, post: post, imageSource: imageSource) {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                         panelOpen = false
                     }

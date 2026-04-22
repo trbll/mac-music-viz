@@ -188,6 +188,9 @@ private enum Defaults {
         case "vinyl":
             return .init(bloom: 0.44, trails: 0.05, mouseRipple: 0.14,
                          mouseLens: 0.18, chroma: 0.16, vignette: 0.34)
+        case "imageReactor":
+            return .init(bloom: 0.52, trails: 0.10, mouseRipple: 0.16,
+                         mouseLens: 0.20, chroma: 0.20, vignette: 0.18)
         default:
             return .init(bloom: 0.58, trails: 0.10, mouseRipple: 0.08,
                          mouseLens: 0.10, chroma: 0.18, vignette: 0.22)

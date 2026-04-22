@@ -8,6 +8,7 @@ struct MetalView: NSViewRepresentable {
     let presets: PresetManager
     let params: ParamStore
     let post: PostSettings
+    let imageSource: ImageSourceStore
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -19,10 +20,20 @@ struct MetalView: NSViewRepresentable {
         view.colorPixelFormat = .bgra8Unorm
         view.framebufferOnly = true
 
-        let renderer = MetalRenderer(device: view.device!, audio: audio, presets: presets, params: params, post: post)
+        let renderer = MetalRenderer(
+            device: view.device!,
+            audio: audio,
+            presets: presets,
+            params: params,
+            post: post,
+            imageSource: imageSource
+        )
         view.delegate = renderer
         context.coordinator.renderer = renderer
         context.coordinator.presets = presets
+        view.onImageDrop = { [weak imageSource] url in
+            imageSource?.load(url: url)
+        }
         view.onPointer = { [weak renderer] point, isDown, clicked in
             renderer?.pointerMoved(to: point, isDown: isDown, clicked: clicked)
         }
@@ -53,12 +64,14 @@ final class KeyCatchingMTKView: MTKView {
     var onKey: ((NSEvent) -> Bool)?
     var onPointer: ((SIMD2<Float>, Bool, Bool) -> Void)?
     var onPointerExit: (() -> Void)?
+    var onImageDrop: ((URL) -> Void)?
     private var pointerTrackingArea: NSTrackingArea?
 
     override var acceptsFirstResponder: Bool { true }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        registerForDraggedTypes([.fileURL])
         window?.acceptsMouseMovedEvents = true
         DispatchQueue.main.async { [weak self] in
             self?.window?.makeFirstResponder(self)
@@ -126,6 +139,20 @@ final class KeyCatchingMTKView: MTKView {
         super.mouseExited(with: event)
     }
 
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        imageURL(from: sender) == nil ? [] : .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        imageURL(from: sender) == nil ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let url = imageURL(from: sender) else { return false }
+        onImageDrop?(url)
+        return true
+    }
+
     private func normalizedPoint(from event: NSEvent) -> SIMD2<Float> {
         let location = convert(event.locationInWindow, from: nil)
         let width = max(bounds.width, 1)
@@ -134,5 +161,19 @@ final class KeyCatchingMTKView: MTKView {
         let rawY = Float(min(max(location.y / height, 0), 1))
         let y = isFlipped ? rawY : 1.0 - rawY
         return SIMD2<Float>(x, y)
+    }
+
+    private func imageURL(from draggingInfo: NSDraggingInfo) -> URL? {
+        let pasteboard = draggingInfo.draggingPasteboard
+        guard let items = pasteboard.pasteboardItems else { return nil }
+        for item in items {
+            guard let string = item.string(forType: .fileURL),
+                  let url = URL(string: string),
+                  ImageSourceStore.isSupportedImageURL(url) else {
+                continue
+            }
+            return url
+        }
+        return nil
     }
 }

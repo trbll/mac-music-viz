@@ -13,15 +13,23 @@ struct AudioUniforms {
     var loudness: Float = 0
 }
 
+struct ImageUniforms {
+    var imageSize: SIMD2<Float> = .init(1, 1)
+    var hasImage: Float = 0
+    var padding: Float = 0
+}
+
 final class MetalRenderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let library: MTLLibrary
+    private let textureLoader: MTKTextureLoader
 
     private let audio: AudioAnalyzer
     private let presets: PresetManager
     private let params: ParamStore
     private let post: PostSettings
+    private let imageSource: ImageSourceStore
 
     private var currentPresetId: String?
     private var currentPipeline: MTLRenderPipelineState?
@@ -32,6 +40,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     private let spectrumTexture: MTLTexture
     private let waveformTexture: MTLTexture
+    private let fallbackImageTexture: MTLTexture
+    private var imageTexture: MTLTexture?
+    private var loadedImageRevision = -1
     private var sceneTexture: MTLTexture?
     private var historyReadTexture: MTLTexture?
     private var historyWriteTexture: MTLTexture?
@@ -49,14 +60,23 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private var lastPointerEventTime = CACurrentMediaTime() - 999
     private var lastDrawTime = CACurrentMediaTime()
 
-    init(device: MTLDevice, audio: AudioAnalyzer, presets: PresetManager, params: ParamStore, post: PostSettings) {
+    init(
+        device: MTLDevice,
+        audio: AudioAnalyzer,
+        presets: PresetManager,
+        params: ParamStore,
+        post: PostSettings,
+        imageSource: ImageSourceStore
+    ) {
         self.device = device
         self.commandQueue = device.makeCommandQueue()!
         self.library = device.makeDefaultLibrary()!
+        self.textureLoader = MTKTextureLoader(device: device)
         self.audio = audio
         self.presets = presets
         self.params = params
         self.post = post
+        self.imageSource = imageSource
 
         let specDesc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .r32Float,
@@ -75,6 +95,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         )
         waveDesc.usage = [.shaderRead]
         self.waveformTexture = device.makeTexture(descriptor: waveDesc)!
+
+        self.fallbackImageTexture = Self.makeFallbackImageTexture(device: device)
 
         super.init()
     }
@@ -207,6 +229,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let state = audio.snapshot()
         upload(spectrum: state.spectrum, to: spectrumTexture)
         upload(spectrum: state.waveform, to: waveformTexture)
+        let imageState = activeImageState()
 
         let size = view.drawableSize
         var u = AudioUniforms(
@@ -220,6 +243,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         )
         var p = params.packed(for: preset)
         var i = interactionUniforms(now: CACurrentMediaTime())
+        var imageUniforms = imageState.uniforms
         var postUniforms = post.uniforms(for: preset.id, resolution: u.resolution, historyReady: historyValid)
 
         let scenePass = MTLRenderPassDescriptor()
@@ -233,8 +257,10 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         sceneEnc.setFragmentBytes(&u, length: MemoryLayout<AudioUniforms>.stride, index: 0)
         sceneEnc.setFragmentBytes(&p, length: MemoryLayout<PresetParams>.stride, index: 1)
         sceneEnc.setFragmentBytes(&i, length: MemoryLayout<InteractionUniforms>.stride, index: 2)
+        sceneEnc.setFragmentBytes(&imageUniforms, length: MemoryLayout<ImageUniforms>.stride, index: 3)
         sceneEnc.setFragmentTexture(spectrumTexture, index: 0)
         sceneEnc.setFragmentTexture(waveformTexture, index: 1)
+        sceneEnc.setFragmentTexture(imageState.texture, index: 2)
         sceneEnc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         sceneEnc.endEncoding()
 
@@ -297,5 +323,62 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             clickPulse: clickPulse,
             idleTime: idle
         )
+    }
+
+    private func activeImageState() -> (texture: MTLTexture, uniforms: ImageUniforms) {
+        refreshImageTextureIfNeeded()
+        let texture = imageTexture ?? fallbackImageTexture
+        let uniforms = ImageUniforms(
+            imageSize: SIMD2<Float>(Float(texture.width), Float(texture.height)),
+            hasImage: imageTexture == nil ? 0 : 1,
+            padding: 0
+        )
+        return (texture, uniforms)
+    }
+
+    private func refreshImageTextureIfNeeded() {
+        guard loadedImageRevision != imageSource.revision else { return }
+        loadedImageRevision = imageSource.revision
+        imageTexture = nil
+        historyValid = false
+
+        guard let cgImage = imageSource.cgImage else { return }
+        do {
+            let texture = try textureLoader.newTexture(
+                cgImage: cgImage,
+                options: [
+                    .SRGB: false,
+                    .allocateMipmaps: false
+                ]
+            )
+            texture.label = "MusicViz source image"
+            imageTexture = texture
+        } catch {
+            NSLog("MusicViz: failed to upload source image: \(error)")
+        }
+    }
+
+    private static func makeFallbackImageTexture(device: MTLDevice) -> MTLTexture {
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm,
+            width: 1,
+            height: 1,
+            mipmapped: false
+        )
+        desc.usage = [.shaderRead]
+        desc.storageMode = .shared
+
+        let texture = device.makeTexture(descriptor: desc)!
+        texture.label = "MusicViz fallback image"
+        let pixel: [UInt8] = [16, 18, 24, 255]
+        pixel.withUnsafeBytes { bytes in
+            texture.replace(
+                region: MTLRegionMake2D(0, 0, 1, 1),
+                mipmapLevel: 0,
+                withBytes: bytes.baseAddress!,
+                bytesPerRow: 4
+            )
+        }
+        return texture
     }
 }

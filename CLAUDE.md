@@ -32,7 +32,7 @@ in seconds.
 
 ## Uniform layout contract (Swift ↔ MSL)
 
-Four structs are shared across the language boundary. Their layout *must*
+Five structs are shared across the language boundary. Their layout *must*
 match byte-for-byte. If you change either side, change both.
 
 ### `AudioUniforms` (`buffer(0)`)
@@ -76,6 +76,17 @@ offset 44  float  idleTime
 
 Primary preset shaders can opt into this buffer for mouse-aware effects. It is
 always bound, but old shaders can omit it from the signature.
+
+### `ImageUniforms` (`buffer(3)`) — 16 bytes
+```
+offset 0   float2 imageSize
+offset 8   float  hasImage
+offset 12  float  padding
+```
+
+Primary preset shaders can opt into this buffer when sampling the optional
+source image at `texture(2)`. It is always bound. `hasImage` is `0.0` when the
+renderer is binding the 1×1 fallback texture.
 
 ### `PostUniforms` (`buffer(1)` in `fragment_post`) — 48-byte stride
 ```
@@ -141,25 +152,40 @@ struct InteractionUniforms {
 ```
 Only include this argument in shaders that use mouse input.
 
+### `ImageUniforms` at `[[buffer(3)]]`
+```metal
+struct ImageUniforms {
+    float2 imageSize;   // source texture pixel size, or 1×1 fallback
+    float  hasImage;    // 1 when a user image is loaded, else 0
+    float  padding;
+};
+```
+Only include this argument in shaders that sample the optional image texture.
+
 ### Textures
 ```metal
 texture2d<float> spectrum [[texture(0)]];   // 128 × 1, R32Float, log-spaced bins
 texture2d<float> waveform [[texture(1)]];   // 256 × 1, R32Float, time-domain samples
+texture2d<float> source   [[texture(2)]];   // user image, or 1×1 fallback
 ```
 Sample with:
 ```metal
 constexpr sampler s(address::clamp_to_edge, filter::linear);
 float mag = spectrum.sample(s, float2(uv.x, 0.5)).r;   // 0..~1 after window+norm
 float wav = waveform.sample(s, float2(uv.x, 0.5)).r;   // -1..1-ish
+float3 rgb = source.sample(s, uv).rgb;                  // check ImageUniforms.hasImage
 ```
 Bind whichever textures you use — omit them from the signature if you don't.
+Images are selected or dropped at runtime by `ImageSourceStore`; paths and
+bytes are intentionally not persisted.
 
 ### Render path
 Primary presets render into an HDR `rgba16Float` scene texture. The shared
 `fragment_post` shader then applies bloom, history trails, mouse ripple/lens,
 chroma, and vignette into a second HDR texture. `fragment_copy` copies that
 composited result into the drawable. Post and mouse effect intensities are
-resolved per preset by `PostSettings`.
+resolved per preset by `PostSettings`. The optional image texture is sampled
+only by presets that declare `texture(2)` and `ImageUniforms`.
 
 ### Shared helpers in `Shaders.metal`
 - `palette(float t)` — procedural IQ-style cyclic 3-channel palette. Use
@@ -297,9 +323,10 @@ If it builds, ⌘R in Xcode, press `→` until you cycle to Rings, ⌘, to tweak
 - **Shader compile errors fail the pipeline build.** Look for
   `MusicViz: pipeline build failed for <id>: …` in the Xcode console.
   Metal reports line numbers relative to `Shaders.metal`.
-- **Every preset auto-gets spectrum + waveform textures bound.** They're
-  only used if your fragment function takes them as `[[texture(0/1)]]`
-  params; otherwise the binding is a no-op.
+- **Every preset auto-gets spectrum + waveform + source image textures
+  bound.** They're only used if your fragment function takes them as
+  `[[texture(0/1/2)]]` params; otherwise the binding is a no-op. Image-aware
+  shaders should also take `ImageUniforms` at `[[buffer(3)]]`.
 
 ## Adding a new `ParamSpec.Kind`
 
@@ -342,8 +369,8 @@ Rare, but if you need (say) a two-float vector picker or a file path:
 - `MTKView.delegate.draw(in:)` runs on the main thread by default. The
   renderer reads an `AudioState` snapshot each frame — cheap copy.
 - Don't introduce `@Published` on the audio hot path. UI state
-  (`capture.isRunning`, `presets.index`, `params.values`) is the only
-  place `@Published` is appropriate, and changes there flow through
+  (`capture.isRunning`, `presets.index`, `params.values`, `imageSource`) is
+  the only place `@Published` is appropriate, and changes there flow through
   `MainActor.run` / main queue.
 
 ## Liquid Glass (future)
